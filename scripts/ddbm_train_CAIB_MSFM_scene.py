@@ -28,6 +28,7 @@ from ddbm.script_util_2 import (
 )
 from ddbm.train_util_2 import TrainLoop
 from SAB.ConvNetworkWithImageFeature_2 import ConvNetworkWithImageFeature as CNW
+import torch
 import torch.distributed as dist
 
 # from pathlib import Path
@@ -40,6 +41,10 @@ from datasets.augment import AugmentPipe
 def main(args):
     if args.gpus:
         os.environ["CUDA_VISIBLE_DEVICES"] = args.gpus
+    # PyCharm 单进程直跑多卡：自动开启 DataParallel 模式（不依赖 torchrun）。
+    visible_gpu_count = torch.cuda.device_count() if torch.cuda.is_available() else 0
+    use_dp = (visible_gpu_count > 1) and ("LOCAL_RANK" not in os.environ) and ("WORLD_SIZE" not in os.environ)
+    os.environ["DDBM_USE_DATAPARALLEL"] = "1" if use_dp else "0"
     # # 先告诉 dist_util 我们要用哪块 GPU
     # dist_util.set_device_id(args.gpu)
     # workdir = get_workdir(args.exp)
@@ -54,7 +59,11 @@ def main(args):
     dist_util.setup_dist()
     logger.configure(dir=workdir)
     if dist.get_rank() == 0:
-        logger.log(f"CUDA_VISIBLE_DEVICES={os.environ.get('CUDA_VISIBLE_DEVICES', '(all)')}, LOCAL_RANK={os.environ.get('LOCAL_RANK', 'N/A')}")
+        logger.log(
+            f"CUDA_VISIBLE_DEVICES={os.environ.get('CUDA_VISIBLE_DEVICES', '(all)')}, "
+            f"LOCAL_RANK={os.environ.get('LOCAL_RANK', 'N/A')}, "
+            f"visible_gpus={visible_gpu_count}, use_dataparallel={use_dp}"
+        )
     # comm = MPI.COMM_WORLD
     # rank = comm.Get_rank()
     # visible_gpus = [3, 4]  # 指定 GPU 列表
@@ -200,8 +209,8 @@ def create_argparser():
         microbatch=-1,  # -1 disables microbatches
         ema_rate="0.9999",  # comma-separated list of EMA values
         log_interval=50,
-        test_interval=500,
-        save_interval=10000,
+        test_interval=100,
+        save_interval=100,
         save_interval_for_preemption=50000,
         resume_checkpoint="",
         resume_checkpoint1="",

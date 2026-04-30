@@ -41,10 +41,14 @@ class FeatureFusionNet(nn.Module):
         if device is not None:
             self.to(device)
     def forward(self, x1, x2, x3, x4):
-        # 确保输入在和网络相同的 device / dtype 上
-        param = next(self.parameters())
-        device = param.device
-        dtype = param.dtype
+        # 尽量对齐到模块参数的 device / dtype；若当前模块无参数，则回退到输入张量。
+        first_param = next(self.parameters(), None)
+        if first_param is not None:
+            device = first_param.device
+            dtype = first_param.dtype
+        else:
+            device = x1.device
+            dtype = x1.dtype
 
         x1 = x1.to(device=device, dtype=dtype)
         x2 = x2.to(device=device, dtype=dtype)

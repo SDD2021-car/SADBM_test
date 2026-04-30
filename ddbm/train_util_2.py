@@ -141,7 +141,12 @@ class TrainLoop:
                 copy.deepcopy(self.mp_trainer2.master_params)
                 for _ in range(len(self.ema_rate))
             ]
-        if th.cuda.is_available():
+        use_dataparallel = os.environ.get("DDBM_USE_DATAPARALLEL", "0") == "1"
+        if th.cuda.is_available() and use_dataparallel and th.cuda.device_count() > 1:
+            self.use_ddp = False
+            self.ddp_model = th.nn.DataParallel(self.model)
+            logger.log(f"Using DataParallel on {th.cuda.device_count()} GPUs (single-process mode).")
+        elif th.cuda.is_available():
             self.use_ddp = True
             self.ddp_model = DDP(
                 self.model,
