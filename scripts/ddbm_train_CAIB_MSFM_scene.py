@@ -3,13 +3,17 @@ Train a diffusion model on images.
 """
 import os
 import wandb
-from mpi4py import MPI
+# from mpi4py import MPI
 
 os.environ["WANDB_API_KEY"] = '389f9942e9b10a034547c47a26e9c987effb0c42'
 os.environ["WANDB_MODE"] = "offline"
 
 import sys
-sys.path.append('/data/yjy_data/DDBM')
+# sys.path.append('/data/yjy_data/DDBM')
+from pathlib import Path
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 import argparse
 from ddbm import dist_util, logger
 from datasets import load_data
@@ -26,7 +30,7 @@ from ddbm.train_util_2 import TrainLoop
 from SAB.ConvNetworkWithImageFeature_2 import ConvNetworkWithImageFeature as CNW
 import torch.distributed as dist
 
-from pathlib import Path
+# from pathlib import Path
 
 from glob import glob
 import os
@@ -34,13 +38,23 @@ from datasets.augment import AugmentPipe
 
 
 def main(args):
-    # 先告诉 dist_util 我们要用哪块 GPU
-    dist_util.set_device_id(args.gpu)
+    if args.gpus:
+        os.environ["CUDA_VISIBLE_DEVICES"] = args.gpus
+    # # 先告诉 dist_util 我们要用哪块 GPU
+    # dist_util.set_device_id(args.gpu)
+    # workdir = get_workdir(args.exp)
+    # Path(workdir).mkdir(parents=True, exist_ok=True)
+    # 多卡并行时优先使用 torchrun 注入的 LOCAL_RANK 选卡。
+
+    local_rank = int(os.environ.get("LOCAL_RANK", args.gpu))
+    dist_util.set_device_id(local_rank)
     workdir = get_workdir(args.exp)
     Path(workdir).mkdir(parents=True, exist_ok=True)
 
     dist_util.setup_dist()
     logger.configure(dir=workdir)
+    if dist.get_rank() == 0:
+        logger.log(f"CUDA_VISIBLE_DEVICES={os.environ.get('CUDA_VISIBLE_DEVICES', '(all)')}, LOCAL_RANK={os.environ.get('LOCAL_RANK', 'N/A')}")
     # comm = MPI.COMM_WORLD
     # rank = comm.Get_rank()
     # visible_gpus = [3, 4]  # 指定 GPU 列表
@@ -199,7 +213,8 @@ def create_argparser():
         num_workers=2,
         use_augment=False,
         answer_json_path="/data/yjy_data/DDBM_GT_Unet/captions_train_scene_no_class_answers_en.json",
-        gpu=1,
+        gpu=0,
+        gpus="1,2,3,4,5,6",
         text_model_path="/NAS_data/hjf/clip-vit-large-patch14"
 
     )

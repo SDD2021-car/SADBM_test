@@ -145,12 +145,16 @@ class TextAdapter(nn.Module):
 class FiLMBlock(nn.Module):
     def __init__(self, text_dim, channels):
         super().__init__()
+
         self.gamma = nn.Linear(text_dim, channels)
         self.beta = nn.Linear(text_dim, channels)
 
     def forward(self, feat, text_cond):
+        text_cond = text_cond.to(self.gamma.weight.dtype)
         g = self.gamma(text_cond).unsqueeze(-1).unsqueeze(-1)
         b = self.beta(text_cond).unsqueeze(-1).unsqueeze(-1)
+        g = g.to(feat.dtype)
+        b = b.to(feat.dtype)
         return g * feat + b
 
 
@@ -408,7 +412,7 @@ class QKVFlashAttention(nn.Module):
             dtype=None,
             **kwargs,
     ) -> None:
-        from einops import rearrange
+        # from einops import rearrange
         from flash_attn.modules.mha import FlashSelfAttention
 
         assert batch_first
@@ -427,20 +431,25 @@ class QKVFlashAttention(nn.Module):
         self.inner_attn = FlashSelfAttention(
             attention_dropout=attention_dropout,  # **factory_kwargs
         )
-        self.rearrange = rearrange
+        # self.rearrange = rearrange
 
     def forward(self, qkv, attn_mask=None, key_padding_mask=None, need_weights=False):
-        qkv = self.rearrange(
-            qkv, "b (three h d) s -> b s three h d", three=3, h=self.num_heads
-        )
+        # qkv = self.rearrange(
+        #     qkv, "b (three h d) s -> b s three h d", three=3, h=self.num_heads
+        # )
+        b, three_hd, s = qkv.shape
+        qkv = qkv.view(b, 3, self.num_heads, self.head_dim, s)
+        qkv = qkv.permute(0, 4, 1, 2, 3).contiguous()
         qkv = self.inner_attn(
-            qkv.contiguous(),
+            qkv,
+            # qkv.contiguous(),
             # key_padding_mask=key_padding_mask,
             # need_weights=need_weights,
             causal=self.causal,
         )
-        return self.rearrange(qkv, "b s h d -> b (h d) s")
-
+        # return self.rearrange(qkv, "b s h d -> b (h d) s")
+        qkv = qkv.permute(0, 2, 3, 1).contiguous()
+        return qkv.view(b, self.num_heads * self.head_dim, s)
 
 def count_flops_attn(model, _x, y):
     """

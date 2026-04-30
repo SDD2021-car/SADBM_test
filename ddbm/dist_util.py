@@ -8,7 +8,7 @@ import socket
 
 import blobfile as bf
 import torch
-from mpi4py import MPI #not sure why this needs to be set after torch
+# from mpi4py import MPI #not sure why this needs to be set after torch
 import torch.distributed as dist
 
 # Change this to reflect your cluster layout.
@@ -29,8 +29,12 @@ def get_device_id() -> int:
     """
     return _DEVICE_ID
 
+def _get_mpi_comm():
+    from mpi4py import MPI
+    return MPI.COMM_WORLD
 
-GPUS_PER_NODE = MPI.COMM_WORLD.Get_size()
+
+GPUS_PER_NODE = torch.cuda.device_count() if torch.cuda.is_available() else 1
 
 SETUP_RETRY_COUNT = 3
 
@@ -45,7 +49,7 @@ def setup_dist():
     if torch.cuda.is_available():
         torch.cuda.set_device(_DEVICE_ID)
 
-    comm = MPI.COMM_WORLD
+    comm = _get_mpi_comm()
     backend = "gloo" if not torch.cuda.is_available() else "nccl"
 
     if backend == "gloo":
@@ -78,20 +82,25 @@ def load_state_dict(path, **kwargs):
     Load a PyTorch file without redundant fetches across MPI ranks.
     """
     chunk_size = 2**30  # MPI has a relatively small size limit
-    if MPI.COMM_WORLD.Get_rank() == 0:
+    if dist.is_initialized() and int(os.environ.get("WORLD_SIZE", "1")) > 1 and "RANK" in os.environ:
+        # torchrun/env:// path: every rank can read local/remote storage directly.
+        return torch.load(path, **kwargs)
+
+    comm = _get_mpi_comm()
+    if comm.Get_rank() == 0:
         with bf.BlobFile(path, "rb") as f:
             data = f.read()
         num_chunks = len(data) // chunk_size
         if len(data) % chunk_size:
             num_chunks += 1
-        MPI.COMM_WORLD.bcast(num_chunks)
+        comm.bcast(num_chunks)
         for i in range(0, len(data), chunk_size):
-            MPI.COMM_WORLD.bcast(data[i : i + chunk_size])
+            comm.bcast(data[i : i + chunk_size])
     else:
-        num_chunks = MPI.COMM_WORLD.bcast(None)
+        num_chunks = comm.bcast(None)
         data = bytes()
         for _ in range(num_chunks):
-            data += MPI.COMM_WORLD.bcast(None)
+            data += comm.bcast(None)
 
     return torch.load(io.BytesIO(data), **kwargs)
 
