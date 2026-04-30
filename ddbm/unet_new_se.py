@@ -128,6 +128,33 @@ class Upsample(nn.Module):
         return x
 
 
+class TextAdapter(nn.Module):
+    def __init__(self, in_dim, out_dim, hidden_dim=1024):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(in_dim, hidden_dim),
+            nn.GELU(),
+            nn.Linear(hidden_dim, out_dim),
+            nn.LayerNorm(out_dim),
+        )
+
+    def forward(self, x):
+        return self.net(x)
+
+
+class FiLMBlock(nn.Module):
+    def __init__(self, text_dim, channels):
+        super().__init__()
+        self.gamma = nn.Linear(text_dim, channels)
+        self.beta = nn.Linear(text_dim, channels)
+
+    def forward(self, feat, text_cond):
+        g = self.gamma(text_cond).unsqueeze(-1).unsqueeze(-1)
+        b = self.beta(text_cond).unsqueeze(-1).unsqueeze(-1)
+        return g * feat + b
+
+
+
 class Downsample(nn.Module):
     """
     A downsampling layer with an optional convolution.
@@ -597,6 +624,10 @@ class UNetModel(nn.Module):
             use_new_attention_order=False,
             attention_type='flash',
             condition_mode=None,
+            use_text_guidance=False,
+            text_cond_dim=512,
+            text_feat_dim=768,
+            encoder_channels=None,
     ):
         super().__init__()
 
@@ -620,6 +651,12 @@ class UNetModel(nn.Module):
         self.num_heads_upsample = num_heads_upsample
 
         self.condition_mode = condition_mode
+
+        self.use_text_guidance = use_text_guidance
+        self.encoder_channels = encoder_channels or [model_channels, model_channels, model_channels * 2, model_channels * 2]
+        if self.use_text_guidance:
+            self.text_adapter = TextAdapter(text_feat_dim, text_cond_dim)
+            self.film_blocks = nn.ModuleList([FiLMBlock(text_cond_dim, c) for c in self.encoder_channels])
 
         time_embed_dim = model_channels * 4
         self.time_embed = nn.Sequential(
@@ -811,7 +848,8 @@ class UNetModel(nn.Module):
         self.output_blocks.apply(convert_module_to_f32)
         self.se_block.apply(convert_module_to_f32)
 
-    def forward(self, x, timesteps, xT=None, y=None):
+    # def forward(self, x, timesteps, xT=None, y=None):
+    def forward(self, x, timesteps, xT=None, y=None, text_feat=None):
         """
         Apply the model to an input batch.
 
@@ -835,8 +873,20 @@ class UNetModel(nn.Module):
             emb = emb + self.label_emb(y)
 
         h = x.type(self.dtype)
+
+        if self.use_text_guidance and text_feat is not None:
+            text_feat = text_feat.to(device=x.device)
+            text_cond = self.text_adapter(text_feat)
+            text_cond = text_cond.to(device=x.device, dtype=self.dtype)
+        else:
+            text_cond = None
+        film_idx = 0
         for module in self.input_blocks:
             h = module(h, emb)
+            if text_cond is not None and film_idx < len(self.film_blocks):
+                if h.shape[1] == self.encoder_channels[film_idx]:
+                    h = self.film_blocks[film_idx](h, text_cond)
+                    film_idx += 1
             hs.append(h)
         h = self.se_block(hs[5],hs[13],hs[21],h)
         h = self.middle_block(h, emb)

@@ -194,6 +194,7 @@ def load_data(
     include_test=False,
     seed=42,
     num_workers=2,
+    answer_json_path="",
 ):
   # Compute batch size for this worker.
   root = data_dir
@@ -203,13 +204,13 @@ def load_data(
      
     from .aligned_dataset import EdgesDataset
     trainset = EdgesDataset(dataroot=root, train=True, img_size= image_size,
-                                random_crop=True, random_flip=True)
+                                random_crop=True, random_flip=True, answer_json_path=answer_json_path)
 
     valset = EdgesDataset(dataroot=root, train=True, img_size= image_size,
-                                random_crop=False, random_flip=False)
+                                random_crop=False, random_flip=False, answer_json_path=answer_json_path)
     if include_test:
       testset = EdgesDataset(dataroot=root, train=False, img_size= image_size,
-                                random_crop=False, random_flip=False)
+                                random_crop=False, random_flip=False, answer_json_path=answer_json_path)
 
   elif dataset == 'diode':
 
@@ -222,7 +223,7 @@ def load_data(
 
     if include_test:
       testset = DIODE(dataroot=root, train=False, img_size= image_size,
-                                random_crop=False, random_flip=False)
+                                random_crop=False, random_flip=False, answer_json_path=answer_json_path)
 
   
   loader = DataLoader(

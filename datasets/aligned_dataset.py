@@ -14,6 +14,7 @@ from torch.utils.data import DataLoader, Dataset
 from torch.utils.data.sampler import Sampler
 import torch.distributed as dist
 from torchvision.utils import save_image
+import json
 
 from PIL import Image
 import matplotlib.pyplot as plt
@@ -104,18 +105,21 @@ def get_flip(img, flip):
     return __flip(img, flip)
 
 
+
+
 class EdgesDataset(torch.utils.data.Dataset):
     """A dataset class for paired image dataset.
     It assumes that the directory '/path/to/data/train' contains image pairs in the form of {A,B}.
     During test time, you need to prepare a directory '/path/to/data/test'.
     """
 
-    def __init__(self, dataroot, train=True, img_size=256, random_crop=False, random_flip=True):
+    def __init__(self, dataroot, train=True, img_size=256, random_crop=False, random_flip=True, answer_json_path=""):
         """Initialize this dataset class.
         Parameters:
             opt (Option class) -- stores all the experiment flags; needs to be a subclass of BaseOptions
         """
         super().__init__()
+        self.dataroot = dataroot
         if train:
             self.train_dir = os.path.join(dataroot, 'train')  # get the image directory
             self.train_paths = make_dataset(self.train_dir)  # get image paths
@@ -132,6 +136,116 @@ class EdgesDataset(torch.utils.data.Dataset):
         self.random_crop = random_crop
         self.random_flip = random_flip
         self.train = train
+        self.answer_json_path = answer_json_path
+        self._build_answer_map()
+
+
+
+    def _load_answer_from_json_file(self, json_path):
+        """Support two formats:
+        1) sidecar dict: {"answer": "..."}
+        2) list manifest: [{"image": "...", "answer": "..."}, ...]
+        """
+        if not os.path.exists(json_path):
+            return None
+        try:
+            with open(json_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except Exception:
+            return None
+
+        if isinstance(data, dict):
+            if "answer" in data:
+                return str(data.get("answer", ""))
+            return None
+
+        if isinstance(data, list):
+            # list manifest does not correspond to one sample directly
+            return None
+
+        return None
+
+    def _tail_key(self, path_str):
+        p = os.path.normpath(path_str)
+        parts = p.split(os.sep)
+        for anchor in [("Train", "B"), ("train",), ("Val", "B"), ("val",)]:
+            n = len(anchor)
+            for i in range(len(parts) - n):
+                if tuple(parts[i:i+n]) == anchor:
+                    return os.path.join(*parts[i+n:]) if i+n < len(parts) else ""
+        return os.path.basename(p)
+
+    def _build_answer_map(self):
+        """Build mapping: basename(image_path) -> answer for manifest json files under dataroot."""
+        self.answer_map = {}
+        self.answer_map_stem = {}
+        self.answer_map_full = {}
+        self.answer_map_tail = {}
+        scan_roots = [self.dataroot]
+        if self.answer_json_path:
+            scan_roots = [self.answer_json_path] if os.path.isfile(self.answer_json_path) else [self.answer_json_path]
+
+        for scan_root in scan_roots:
+            if os.path.isfile(scan_root):
+                json_candidates = [scan_root]
+            else:
+                json_candidates = []
+                for root, _, files in os.walk(scan_root):
+                    for fn in files:
+                        if fn.lower().endswith('.json'):
+                            json_candidates.append(os.path.join(root, fn))
+
+            for json_path in json_candidates:
+                try:
+                    with open(json_path, 'r', encoding='utf-8') as f:
+                        data = json.load(f)
+                except Exception:
+                    continue
+
+                if isinstance(data, list):
+                    for item in data:
+                        if not isinstance(item, dict):
+                            continue
+                        image_path = item.get('image', '')
+                        answer = item.get('answer', '')
+                        if image_path:
+                            ans = str(answer)
+                            norm_full = os.path.normpath(image_path)
+                            base = os.path.basename(norm_full)
+                            stem = os.path.splitext(base)[0]
+                            self.answer_map_full[norm_full] = ans
+                            self.answer_map[base] = ans
+                            self.answer_map_stem[stem] = ans
+                            tail = self._tail_key(norm_full)
+                            if tail:
+                                self.answer_map_tail[tail] = ans
+
+    def _get_answer(self, ab_path):
+        # Priority 1: sidecar same-name json
+        sidecar_json = os.path.splitext(ab_path)[0] + '.json'
+        sidecar_answer = self._load_answer_from_json_file(sidecar_json)
+        if sidecar_answer is not None:
+            return sidecar_answer
+
+        norm = os.path.normpath(ab_path)
+        base = os.path.basename(norm)
+        stem = os.path.splitext(base)[0]
+
+        # Priority 2: manifest exact full-path key
+        if norm in self.answer_map_full:
+            return self.answer_map_full[norm]
+
+        # Priority 3: train/val tail key
+        tail = self._tail_key(norm)
+        if tail in self.answer_map_tail:
+            return self.answer_map_tail[tail]
+
+        # Priority 4: basename key
+        if base in self.answer_map:
+            return self.answer_map[base]
+
+        # Priority 5: stem key
+        return self.answer_map_stem.get(stem, "")
 
     def __getitem__(self, index):
         """Return a data point and its metadata information.
@@ -162,11 +276,13 @@ class EdgesDataset(torch.utils.data.Dataset):
         #                                 flip=self.random_flip)
         A = transform_image(A)
         B = transform_image(B)
-
+        answer = self._get_answer(AB_path)
         if not self.train:
-            return B, A, index, AB_path
+            # return B, A, index, AB_path
+            return B, A, index, AB_path, answer
         else:
-            return B, A, index
+            # return B, A, index
+            return B, A, index, answer
 
     def __len__(self):
         """Return the total number of images in the dataset."""
@@ -186,6 +302,7 @@ class DIODE(torch.utils.data.Dataset):
             opt (Option class) -- stores all the experiment flags; needs to be a subclass of BaseOptions
         """
         super().__init__()
+        self.dataroot = dataroot
         self.image_root = os.path.join(dataroot, 'train' if train else 'val')
         self.crop_size = img_size
         self.resize_size = img_size
@@ -193,7 +310,6 @@ class DIODE(torch.utils.data.Dataset):
         self.random_crop = random_crop
         self.random_flip = random_flip
         self.train = train
-
         self.filenames = [l for l in os.listdir(self.image_root) if not l.endswith('.pth') and not l.endswith('_depth.png') and not l.endswith('_normal.png')]
 
         self.cache_path = os.path.join(self.image_root, cache_name+f'_{img_size}.pth')

@@ -76,6 +76,12 @@ def model_and_diffusion_defaults():
         condition_mode='concat',
         pred_mode='ve',
         weight_schedule="bridge_karras",
+        #################
+        use_text_guidance=False,
+        text_cond_dim=512,
+        text_feat_dim=768,
+        encoder_channels="128,128,256,256",
+        ##################################
     )
     return res
 
@@ -102,6 +108,12 @@ def create_model_and_diffusion(
     condition_mode,
     pred_mode,
     weight_schedule,
+    ########
+    use_text_guidance=True,
+    text_cond_dim=512,
+    text_feat_dim=768,
+    encoder_channels="128,128,256,256",
+    ####
     sigma_data=0.5,
     sigma_min=0.002,
     sigma_max=80.0,
@@ -131,6 +143,12 @@ def create_model_and_diffusion(
         use_new_attention_order=use_new_attention_order,
         attention_type=attention_type,
         condition_mode=condition_mode,
+        ###########
+        use_text_guidance=use_text_guidance,
+        text_cond_dim=text_cond_dim,
+        text_feat_dim=text_feat_dim,
+        encoder_channels=encoder_channels,
+        ############
     )
     diffusion = KarrasDenoiser(
         sigma_data=sigma_data,
@@ -167,6 +185,12 @@ def create_model(
     use_new_attention_order=False,
     attention_type='flash',
     condition_mode=None,
+    ###################
+    use_text_guidance=False,
+    text_cond_dim=512,
+    text_feat_dim=768,
+    encoder_channels="128,128,256,256",
+    ################
 ):
     if channel_mult == "":
         if image_size == 512:
@@ -187,7 +211,11 @@ def create_model(
     attention_ds = []
     for res in attention_resolutions.split(","):
         attention_ds.append(image_size // int(res))
-    
+    ##############
+    if isinstance(encoder_channels, str):
+        encoder_channels = tuple(int(c) for c in encoder_channels.split(",") if c)
+    ############
+
     if unet_type == 'adm':
         return UNetModel(
             image_size=image_size,
@@ -209,6 +237,11 @@ def create_model(
             use_new_attention_order=use_new_attention_order,
             attention_type=attention_type,
             condition_mode=condition_mode,
+            ##############
+            use_text_guidance=use_text_guidance,
+            text_cond_dim=text_cond_dim,
+            text_feat_dim=text_feat_dim,
+            encoder_channels=encoder_channels,
         )
     elif unet_type == 'edm':
         return SongUNet(

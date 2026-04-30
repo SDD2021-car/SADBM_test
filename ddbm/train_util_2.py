@@ -25,6 +25,8 @@ from ddbm.script_util_2 import NUM_CLASSES
 
 from ddbm.karras_diffusion import karras_sample
 
+from ddbm.text_condition import TextConditionEncoder
+
 import glob 
 # For ImageNet experiments, this was a good default value.
 # We found that the lg_loss_scale quickly climbed to
@@ -61,6 +63,7 @@ class TrainLoop:
         lr_anneal_steps=0,
         total_training_steps=10000000,
         augment_pipe=None,
+        text_model_path="",
         **sample_kwargs,
     ):
         self.model = model
@@ -167,6 +170,7 @@ class TrainLoop:
         self.stage0_train = False
         self.fusion_canny = True
         self.canny_SAR = None
+        self.text_encoder = TextConditionEncoder(model_name=(text_model_path or "openai/clip-vit-base-patch32"), device=dist_util.dev(), local_files_only=True) if getattr(self.model, "use_text_guidance", False) else None
     
 
     def _load_and_sync_parameters(self):
@@ -285,7 +289,15 @@ class TrainLoop:
 
     def run_loop(self):
         while True:
-            for batch, cond, _ in self.data:
+            # for batch, cond, _ in self.data:
+            #######3
+            for data_item in self.data:
+                if len(data_item) == 4:
+                    batch, cond, _, answer = data_item
+                else:
+                    batch, cond, _ = data_item
+                    answer = [""] * batch.shape[0]
+            ######
                 if not (not self.lr_anneal_steps or self.step < self.total_training_steps):
                     # Save the last checkpoint if it wasn't already saved.
                     if (self.step - 1) % self.save_interval != 0:
@@ -294,6 +306,7 @@ class TrainLoop:
                 # scale to [-1, 1]
                 # batch is OPT | cond is SAR
                 batch = self.preprocess(batch)
+
                 alpha = [0.01, 0.01, 0.01, 0.01]
 
                 cond = cond.to(dist_util.dev())
@@ -312,7 +325,13 @@ class TrainLoop:
                     cond = {'xT': xT}
                 else:
                     cond['xT'] = self.preprocess(cond['xT'])
-                    
+
+                ########
+                if self.text_encoder is not None:
+                    text_feat = self.text_encoder.encode(list(answer))
+                    cond['text_feat'] = text_feat
+                #########
+
                 took_step = self.run_step(batch, cond)
                 if took_step and self.step % self.log_interval == 0:
                     logs = logger.dumpkvs()

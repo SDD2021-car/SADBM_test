@@ -133,6 +133,7 @@ def main(args):
         batch_size=batch_size,
         image_size=data_image_size,
         num_workers=args.num_workers,
+        answer_json_path=args.answer_json_path,
     )
 
     if args.use_augment:
@@ -167,6 +168,7 @@ def main(args):
         weight_decay=args.weight_decay,
         lr_anneal_steps=args.lr_anneal_steps,
         augment_pipe=augment,
+        text_model_path=args.text_model_path,
         **sample_defaults()
     ).run_loop()
 
@@ -190,13 +192,16 @@ def create_argparser():
         resume_checkpoint="",
         resume_checkpoint1="",
         resume_checkpoint2="",
-        exp='logs_S2O_Canny_CAIB_MSFM_scene_noE2',
+        exp='logs_S2O_Canny_CAIB_MSFM_scene_text_encoder',
         use_fp16=False,
         fp16_scale_growth=1e-3,
         debug=False,
         num_workers=2,
         use_augment=False,
+        answer_json_path="/data/yjy_data/DDBM_GT_Unet/captions_train_scene_no_class_answers_en.json",
         gpu=1,
+        text_model_path="/NAS_data/hjf/clip-vit-large-patch14"
+
     )
     defaults.update(model_and_diffusion_defaults())
     parser = argparse.ArgumentParser()
