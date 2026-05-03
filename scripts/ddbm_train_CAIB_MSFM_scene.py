@@ -194,10 +194,12 @@ def main(args):
         lr_anneal_steps=args.lr_anneal_steps,
         augment_pipe=augment,
         text_model_path=args.text_model_path,
+        text_guidance_weight=args.text_guidance_weight,
+        text_cache_size=args.text_cache_size,
         **sample_defaults()
     ).run_loop()
 
-
+#  /data/yjy_data/DDBM_GT_Unet/logs_S2O_Canny_CAIB_MSFM_scene_text_encoder/ema_2_0.9999_170000.pt
 def create_argparser():
     defaults = dict(
         data_dir="/data/hjf/Dataset/SEN12_Scene/combine",
@@ -207,29 +209,30 @@ def create_argparser():
         weight_decay=0.0,
         lr_anneal_steps=0,
         global_batch_size=2048,
-        batch_size=10,
+        batch_size=16,
         microbatch=-1,  # -1 disables microbatches
         ema_rate="0.9999",  # comma-separated list of EMA values
         log_interval=50,
         test_interval=500,
-        save_interval=10000,
+        save_interval=500,
         save_interval_for_preemption=50000,
         resume_checkpoint="",
-        resume_checkpoint1="/data/yjy_data/DDBM_GT_Unet/logs_S2O_Canny_CAIB_MSFM_scene_text_encoder/ema_2_0.9999_170000.pt",
-        resume_checkpoint2="/data/yjy_data/DDBM_GT_Unet/logs_S2O_Canny_CAIB_MSFM_scene_text_encoder/ema_1_0.9999_170000.pt",
-        exp='logs_S2O_Canny_CAIB_MSFM_scene_text_encoder',
+        resume_checkpoint1="/data/yjy_data/DDBM_GT_Unet/scripts/logs_S2O_Canny_CAIB_MSFM_scene_alpha_1/ema_1_0.9999_200000.pt",
+        resume_checkpoint2="/data/yjy_data/DDBM_GT_Unet/scripts/logs_S2O_Canny_CAIB_MSFM_scene_alpha_1/ema_2_0.9999_200000.pt",
+        exp='logs_S2O_Canny_CAIB_MSFM_scene_text_encoder_0.1',
         use_fp16=False,
         fp16_scale_growth=1e-3,
         debug=False,
-        num_workers=2,
+        num_workers=8,
         use_augment=False,
         answer_json_path=None,
         train_answer_json_path="/data/yjy_data/DDBM_GT_Unet/captions_train_scene_no_class_answers_en.json",
         test_answer_json_path="/data/yjy_data/DDBM_GT_Unet/captions_test_scene_no_class_answers_en.json",
         gpu=0,
         gpus="1,2,3,4,5,6",
-        text_model_path="/NAS_data/hjf/clip-vit-large-patch14"
-
+        text_model_path="/NAS_data/hjf/clip-vit-large-patch14",
+        text_guidance_weight = 0.01,
+        text_cache_size=4096
     )
     defaults.update(model_and_diffusion_defaults())
     parser = argparse.ArgumentParser()

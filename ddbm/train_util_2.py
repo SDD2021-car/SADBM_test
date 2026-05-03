@@ -2,7 +2,7 @@ import copy
 import functools
 import os
 from pathlib import Path
-
+from collections import OrderedDict
 import blobfile as bf
 import torch as th
 import torch.distributed as dist
@@ -64,6 +64,8 @@ class TrainLoop:
         total_training_steps=10000000,
         augment_pipe=None,
         text_model_path="",
+        text_guidance_weight=1.0,
+        text_cache_size=4096,
         **sample_kwargs,
     ):
         self.model = model
@@ -95,7 +97,9 @@ class TrainLoop:
         self.weight_decay = weight_decay
         self.lr_anneal_steps = lr_anneal_steps
         self.total_training_steps = total_training_steps
-
+        self.text_guidance_weight = text_guidance_weight
+        self.text_cache_size = max(int(text_cache_size), 0)
+        self._text_feat_cache = OrderedDict()
         self.step = 0
         self.resume_step = 0
         self.resume_step1 = 0
@@ -178,6 +182,26 @@ class TrainLoop:
         self.text_encoder = TextConditionEncoder(model_name=(text_model_path or "openai/clip-vit-base-patch32"), device=dist_util.dev(), local_files_only=True) if getattr(self.model, "use_text_guidance", False) else None
     
 
+    def _encode_text_with_cache(self, answers):
+        if self.text_encoder is None:
+            return None
+        answer_list = list(answers)
+        if self.text_cache_size <= 0:
+            return self.text_encoder.encode(answer_list)
+
+        uncached = [a for a in answer_list if a not in self._text_feat_cache]
+        if uncached:
+            encoded_new = self.text_encoder.encode(uncached)
+            for ans, feat in zip(uncached, encoded_new):
+                self._text_feat_cache[ans] = feat.detach().cpu()
+                self._text_feat_cache.move_to_end(ans)
+                if len(self._text_feat_cache) > self.text_cache_size:
+                    self._text_feat_cache.popitem(last=False)
+
+        features = [self._text_feat_cache[a].to(dist_util.dev()) for a in answer_list]
+        return th.stack(features, dim=0)
+
+
     def _load_and_sync_parameters(self):
         resume_checkpoint1 = find_resume_checkpoint() or self.resume_checkpoint1
         resume_checkpoint2 = find_resume_checkpoint() or self.resume_checkpoint2
@@ -187,13 +211,17 @@ class TrainLoop:
                 logger.log(f"loading model from checkpoint: {resume_checkpoint1}...")
                 logger.log('Resume step: ', self.resume_step1)
 
-            self.CNW_net.load_state_dict(
-                # dist_util.load_state_dict(
-                #     resume_checkpoint, map_location=dist_util.dev()
-                # ),
-                th.load(resume_checkpoint1, map_location=dist_util.dev()),
-            )
-
+            # self.CNW_net.load_state_dict(
+            #     # dist_util.load_state_dict(
+            #     #     resume_checkpoint, map_location=dist_util.dev()
+            #     # ),
+            #     th.load(resume_checkpoint1, map_location=dist_util.dev()),
+            # )
+            state_dict1 = th.load(resume_checkpoint1, map_location=dist_util.dev())
+            incompatible1 = self.CNW_net.load_state_dict(state_dict1, strict=False)
+            if dist.get_rank() == 0:
+                logger.log(f"CNW missing keys ({len(incompatible1.missing_keys)}): {incompatible1.missing_keys}")
+                logger.log(f"CNW unexpected keys ({len(incompatible1.unexpected_keys)}): {incompatible1.unexpected_keys}")
 
             dist.barrier()
         if resume_checkpoint2:
@@ -202,13 +230,18 @@ class TrainLoop:
                 logger.log(f"loading model from checkpoint: {resume_checkpoint2}...")
                 logger.log('Resume step: ', self.resume_step2)
 
-            self.model.load_state_dict(
-                # dist_util.load_state_dict(
-                #     resume_checkpoint, map_location=dist_util.dev()
-                # ),
-                th.load(resume_checkpoint2, map_location=dist_util.dev()),
-            )
-        
+            # self.model.load_state_dict(
+            #     # dist_util.load_state_dict(
+            #     #     resume_checkpoint, map_location=dist_util.dev()
+            #     # ),
+            #     th.load(resume_checkpoint2, map_location=dist_util.dev()),
+            # )
+            state_dict2 = th.load(resume_checkpoint2, map_location=dist_util.dev())
+            incompatible2 = self.model.load_state_dict(state_dict2, strict=False)
+            if dist.get_rank() == 0:
+                logger.log(f"Model missing keys ({len(incompatible2.missing_keys)}): {incompatible2.missing_keys}")
+                logger.log(f"Model unexpected keys ({len(incompatible2.unexpected_keys)}): {incompatible2.unexpected_keys}")
+
             dist.barrier()
 
     def _load_ema_parameters(self, rate):
@@ -334,8 +367,8 @@ class TrainLoop:
 
                 ########
                 if self.text_encoder is not None:
-                    text_feat = self.text_encoder.encode(list(answer))
-                    cond['text_feat'] = text_feat
+                    text_feat = self._encode_text_with_cache(answer)
+                    cond['text_feat'] = text_feat * self.text_guidance_weight
                 #########
 
                 took_step = self.run_step(batch, cond)
@@ -353,6 +386,7 @@ class TrainLoop:
                     
                     test_data_item = next(iter(self.test_data))
                     test_batch, test_cond, _ = test_data_item[:3]
+                    test_answer = test_data_item[3] if len(test_data_item) > 3 else None
                     test_cond = test_cond.to(dist_util.dev())
                     test_cond = self.CNW_net(test_cond, alpha)
                     test_cond = test_cond.cpu()
@@ -361,6 +395,10 @@ class TrainLoop:
                         test_cond = {'xT': self.preprocess(test_cond)}
                     else:
                         test_cond['xT'] = self.preprocess(test_cond['xT'])
+
+                    if self.text_encoder is not None and test_answer is not None:
+                        test_text_feat = self._encode_text_with_cache(test_answer)
+                        test_cond['text_feat'] = test_text_feat * self.text_guidance_weight
                     self.run_test_step(test_batch, test_cond)
                     logs = logger.dumpkvs()
 
