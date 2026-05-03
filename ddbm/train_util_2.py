@@ -297,8 +297,9 @@ class TrainLoop:
             # for batch, cond, _ in self.data:
             #######3
             for data_item in self.data:
-                if len(data_item) == 4:
-                    batch, cond, _, answer = data_item
+                if len(data_item) >= 4:
+                    batch, cond, _ = data_item[:3]
+                    answer = data_item[3]
                 else:
                     batch, cond, _ = data_item
                     answer = [""] * batch.shape[0]
@@ -350,8 +351,8 @@ class TrainLoop:
                     if os.environ.get("DIFFUSION_TRAINING_TEST", "") and self.step > 0:
                         return
                     
-                    test_batch, test_cond, _ = next(iter(self.test_data))
-                    test_batch = self.preprocess(test_batch)
+                    test_data_item = next(iter(self.test_data))
+                    test_batch, test_cond, _ = test_data_item[:3]
                     test_cond = test_cond.to(dist_util.dev())
                     test_cond = self.CNW_net(test_cond, alpha)
                     test_cond = test_cond.cpu()

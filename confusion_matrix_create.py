@@ -32,12 +32,12 @@ plt.rcParams['mathtext.fontset'] = 'stix'
 labels = ['Farmland', 'Forest', 'Mountain', 'Rural', 'Semi-Urban', 'Urban']
 
 cm = np.array([
-    [124,0,0,33,3,0],
+    [143,0,0,17,0,0],
     [0,157,0,0,0,0],
-    [0,2,149,0,0,0],
-    [24,0,0,132,15,0],
-    [0,2,0,12,121,14],
-    [0,0,0,0,13,145]
+    [0,0,151,0,0,0],
+    [18,1,0,145,6,1],
+    [0,0,0,10,124,15],
+    [0,0,0,0,11,147]
 ])
 
 
@@ -50,7 +50,7 @@ def plot_confusion_matrix(cm, labels, normalize=False, title='Confusion Matrix',
     else:
         cm_to_plot = cm
 
-    fig, ax = plt.subplots(figsize=(8, 6))
+    fig, ax = plt.subplots(figsize=(6, 4))
 
     # 蓝白配色
     im = ax.imshow(cm_to_plot, interpolation='nearest', cmap=plt.cm.Blues)
@@ -61,20 +61,20 @@ def plot_confusion_matrix(cm, labels, normalize=False, title='Confusion Matrix',
     if normalize:
         cbar.set_label(
             'Proportion',
-            fontsize=12,
+            fontsize=14,
             fontproperties=times_new_roman
         )
     else:
         cbar.set_label(
             'Number of samples',
-            fontsize=12,
+            fontsize=14,
             fontproperties=times_new_roman
         )
 
     # 强制颜色条刻度字体
     for tick in cbar.ax.get_yticklabels():
         tick.set_fontproperties(times_new_roman)
-        tick.set_fontsize(12)
+        tick.set_fontsize(14)
 
     # 设置坐标轴刻度
     ax.set_xticks(np.arange(len(labels)))
@@ -96,14 +96,14 @@ def plot_confusion_matrix(cm, labels, normalize=False, title='Confusion Matrix',
     )
     ax.set_title(
         title,
-        fontsize=12,
+        fontsize=16,
         fontproperties=times_new_roman
     )
 
     # 强制 x 轴刻度字体
     for tick in ax.get_xticklabels():
         tick.set_fontproperties(times_new_roman)
-        tick.set_fontsize(12)
+        tick.set_fontsize(14)
         tick.set_rotation(45)
         tick.set_ha('right')
         tick.set_rotation_mode('anchor')
@@ -111,7 +111,7 @@ def plot_confusion_matrix(cm, labels, normalize=False, title='Confusion Matrix',
     # 强制 y 轴刻度字体
     for tick in ax.get_yticklabels():
         tick.set_fontproperties(times_new_roman)
-        tick.set_fontsize(12)
+        tick.set_fontsize(14)
 
     # 强制坐标轴数字刻度字体
     for tick in ax.xaxis.get_major_ticks():
@@ -137,7 +137,7 @@ def plot_confusion_matrix(cm, labels, normalize=False, title='Confusion Matrix',
                 ha='center',
                 va='center',
                 color='white' if value > threshold else 'black',
-                fontsize=12,
+                fontsize=14,
                 fontproperties=times_new_roman
             )
 
@@ -156,8 +156,8 @@ plot_confusion_matrix(
     cm=cm,
     labels=labels,
     normalize=False,
-    title='Confusion Matrix of TSC-S2O Results\nBased on the DINOv2 Classification Network',
-    save_path='/data/yjy_data/DDBM_GT_Unet/confusion_matrix/confusion_matrix_blue_white_dinov2_TSC-S2O.png'
+    title='Confusion Matrix of only SAR Results\nBased on the ResNet-18 Classification Network',
+    save_path='/data/yjy_data/DDBM_GT_Unet/confusion_matrix/confusion_matrix_blue_white_res18_SAR.png'
 )
 
 # =========================
@@ -167,6 +167,6 @@ plot_confusion_matrix(
     cm=cm,
     labels=labels,
     normalize=True,
-    title='Normalized Confusion Matrix of TSC-S2O Results\nBased on the DINOv2 Classification Network',
-    save_path='/data/yjy_data/DDBM_GT_Unet/confusion_matrix/normalized_confusion_matrix_blue_white_dinov2_TSC-S2O.png'
+    title='Normalized Confusion Matrix of only SAR Results\nBased on the ResNet-18 Classification Network',
+    save_path='/data/yjy_data/DDBM_GT_Unet/confusion_matrix/normalized_confusion_matrix_blue_white_res18_SAR.png'
 )

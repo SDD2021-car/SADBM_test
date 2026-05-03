@@ -199,7 +199,7 @@ def main():
         #     tensor2image1(x, i)
         # for i, x in enumerate(path):
         #     tensor2image(x, i)
-        save_images_with_filenames(path[200],x0_filename,'/data/yjy_data/DDBM_GT_Unet/result_S2O_Canny_180000')
+        save_images_with_filenames(path[200],x0_filename,'/data/yjy_data/DDBM_GT_Unet/result_S2O_Canny_130000')
 
         sample = ((sample + 1) * 127.5).clamp(0, 255).to(th.uint8)
         sample = sample.permute(0, 2, 3, 1)
@@ -255,8 +255,8 @@ def create_argparser():
         churn_step_ratio=0.33,
         rho=7.0,
         steps=100,
-        model_path="/data/yjy_data/DDBM_GT_Unet/scripts/logs_S2O_Canny_CAIB_MSFM/ema_2_0.9999_180000.pt",
-        CNW_path="/data/yjy_data/DDBM_GT_Unet/scripts/logs_S2O_Canny_CAIB_MSFM/ema_1_0.9999_180000.pt",
+        model_path="/data/yjy_data/DDBM_GT_Unet/scripts/logs_S2O_Canny_CAIB_MSFM/ema_2_0.9999_130000.pt",
+        CNW_path="/data/yjy_data/DDBM_GT_Unet/scripts/logs_S2O_Canny_CAIB_MSFM/ema_1_0.9999_130000.pt",
         path_refine_network="/data/yjy_data/DDBM_GT_Unet/canny_optimization_result/train_result/unet_epoch_50.pth",
         exp="logs_S2O_Canny_CAIB_MSFM",
         seed=42,

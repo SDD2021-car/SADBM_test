@@ -22,17 +22,15 @@ from ddbm.script_util_2 import (
 )
 from ddbm.random_util import get_generator
 from ddbm.karras_diffusion import karras_sample, forward_sample
-from datasets import load_data
-from SAB.ConvNetworkWithImageFeature_2 import ConvNetworkWithImageFeature as CNW
+from datasets.image_folder import load_data
+from SAB.ConvNetworkWithImageFeature_learnable import ConvNetworkWithImageFeature as CNW
 from pathlib import Path
-from ddbm.text_condition import TextConditionEncoder
-import Sobel_train
+import Canny_train
 
 from PIL import Image
 def get_workdir(exp):
     workdir = f'{exp}'
     return workdir
-
 
 def save_images_with_filenames(images, file_names, output_dir="output_images"):
     """
@@ -68,7 +66,7 @@ def save_images_with_filenames(images, file_names, output_dir="output_images"):
 
 def main():
     args = create_argparser().parse_args()
-
+    dist_util.set_device_id(args.gpu)
     workdir = os.path.dirname(args.model_path)
 
     ## assume ema ckpt format: ema_{rate}_{steps}.pt
@@ -105,7 +103,7 @@ def main():
     # # 切换到 eval 模式（关闭 Dropout / BatchNorm 统计更新）
     # canny_refine_network.eval()
 
-    CNW_net = CNW(3, 3)
+    CNW_net = CNW(3, 3, True)
     CNW_net.load_state_dict(
         dist_util.load_state_dict(args.CNW_path, map_location="cpu")
     )
@@ -116,10 +114,10 @@ def main():
     model.eval()
 
     logger.log("sampling...")
-    
+
 
     all_images = []
-    
+
 
     all_dataloaders = load_data(
         data_dir=args.data_dir,
@@ -129,9 +127,6 @@ def main():
         include_test=True,
         seed=args.seed,
         num_workers=args.num_workers,
-        answer_json_path=args.answer_json_path,
-        train_answer_json_path=args.train_answer_json_path,
-        test_answer_json_path=args.test_answer_json_path,
     )
     if args.split =='train':
         dataloader = all_dataloaders[1]
@@ -140,18 +135,14 @@ def main():
     else:
         raise NotImplementedError
     args.num_samples = len(dataloader.dataset)
-    text_encoder = TextConditionEncoder(
-        model_name=(args.text_model_path or "openai/clip-vit-base-patch32"),
-        device=dist_util.dev(),
-        local_files_only=True,
-    ) if getattr(model, "use_text_guidance", False) else None
+
 
     for i, data in enumerate(dataloader):
-        
+
         x0_image = data[0]
         x0_filename = data[3]
         x0 = x0_image.to(dist_util.dev()) * 2 -1
-        
+
         y0_image = data[1].to(dist_util.dev())
 
         alpha = [0.01, 0.01, 0.01, 0.01]
@@ -159,15 +150,6 @@ def main():
 
         y0 = cond.to(dist_util.dev()) * 2 - 1
         model_kwargs = {'xT': y0}
-        if len(data) >= 5:
-            answers = list(data[4])
-        elif len(data) >= 4 and isinstance(data[3], (list, tuple)):
-            answers = list(data[3])
-        else:
-            answers = [""] * x0.shape[0]
-
-        if text_encoder is not None:
-            model_kwargs['text_feat'] = text_encoder.encode(answers)
         index = data[2].to(dist_util.dev())
 
         sample, path, nfe = karras_sample(
@@ -190,12 +172,12 @@ def main():
         #     tensor2image1(x, i)
         # for i, x in enumerate(path):
         #     tensor2image(x, i)
-        save_images_with_filenames(path[200],x0_filename,'/data/yjy_data/DDBM_GT_Unet/result_S2O_text_210000')
+        save_images_with_filenames(path[200],x0_filename,'/data/yjy_data/DDBM_GT_Unet/result_S2O_opt_10000')
 
         sample = ((sample + 1) * 127.5).clamp(0, 255).to(th.uint8)
         sample = sample.permute(0, 2, 3, 1)
         sample = sample.contiguous()
-        
+
         gathered_samples = [th.zeros_like(sample) for _ in range(dist.get_world_size())]
         dist.all_gather(gathered_samples, sample)  # gather not supported with NCCL
         if index is not None:
@@ -213,17 +195,17 @@ def main():
             if x0 is not None:
                 vutils.save_image(x0_image[:num_display], f'{sample_dir}/x_{i}.png',nrow=int(np.sqrt(num_display)))
             vutils.save_image(y0_image[:num_display]/2+0.5, f'{sample_dir}/y_{i}.png',nrow=int(np.sqrt(num_display)))
-            
-            
+
+
         all_images.append(gathered_samples.detach().cpu().numpy())
-        
-        
+
+
     logger.log(f"created {len(all_images) * args.batch_size * dist.get_world_size()} samples")
-        
+
 
     arr = np.concatenate(all_images, axis=0)
     arr = arr[:args.num_samples]
-    
+
     if dist.get_rank() == 0:
         shape_str = "x".join([str(x) for x in arr.shape])
         out_path = os.path.join(sample_dir, f"samples_{shape_str}_nfe{nfe}.npz")
@@ -238,9 +220,6 @@ def create_argparser():
     defaults = dict(
         data_dir="/data/hjf/Dataset/SEN12_Scene/combine", ## only used in bridge
         dataset='edges2handbags',
-        answer_json_path=None,
-        train_answer_json_path="/data/yjy_data/DDBM_GT_Unet/captions_train_scene_no_class_answers_en.json",
-        test_answer_json_path="/data/yjy_data/DDBM_GT_Unet/captions_test_scene_no_class_answers_en.json",
         clip_denoised=True,
         num_samples=10000,
         batch_size=16,
@@ -249,15 +228,16 @@ def create_argparser():
         churn_step_ratio=0.33,
         rho=7.0,
         steps=100,
-        model_path="/data/yjy_data/DDBM_GT_Unet/logs_S2O_Canny_CAIB_MSFM_scene_text_encoder/ema_2_0.9999_210000.pt",
-        CNW_path="/data/yjy_data/DDBM_GT_Unet/logs_S2O_Canny_CAIB_MSFM_scene_text_encoder/ema_1_0.9999_210000.pt",
-        exp="logs_S2O_Canny_CAIB_MSFM_scene_text_encoder",
+        model_path="/data/yjy_data/DDBM_GT_Unet/logs_S2O_Canny_Original_CAIB_MSFM_scene_alpha_learnable_continue/ema_2_0.9999_010000.pt",
+        CNW_path="/data/yjy_data/DDBM_GT_Unet/logs_S2O_Canny_Original_CAIB_MSFM_scene_alpha_learnable_continue/ema_1_0.9999_010000.pt",
+        path_refine_network="/NAS_data/yjy/DDBM_GT_Unet/DDBM_S2O_canny_results/Canny_train_logs/canny_optimization_result/train_result/unet_epoch_120.pth",
+        exp="logs_S2O_Canny_Original_CAIB_MSFM_scene_alpha_learnable_continue",
         seed=42,
         ts="",
         upscale=False,
         num_workers=2,
         guidance=0.5,
-        text_model_path="/NAS_data/hjf/clip-vit-large-patch14",
+        gpu=7,
     )
     defaults.update(model_and_diffusion_defaults())
     parser = argparse.ArgumentParser()

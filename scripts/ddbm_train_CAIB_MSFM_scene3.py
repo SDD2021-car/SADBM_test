@@ -3,17 +3,13 @@ Train a diffusion model on images.
 """
 import os
 import wandb
-# from mpi4py import MPI
+from mpi4py import MPI
 
 os.environ["WANDB_API_KEY"] = '389f9942e9b10a034547c47a26e9c987effb0c42'
 os.environ["WANDB_MODE"] = "offline"
 
 import sys
-# sys.path.append('/data/yjy_data/DDBM')
-from pathlib import Path
-REPO_ROOT = Path(__file__).resolve().parents[1]
-if str(REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT))
+sys.path.append('/data/yjy_data/DDBM')
 import argparse
 from ddbm import dist_util, logger
 from datasets import load_data
@@ -27,11 +23,10 @@ from ddbm.script_util_2 import (
     get_workdir
 )
 from ddbm.train_util_2 import TrainLoop
-from SAB.ConvNetworkWithImageFeature_2 import ConvNetworkWithImageFeature as CNW
-import torch
+from SAB.ConvNetworkWithImageFeature_learnable import ConvNetworkWithImageFeature as CNW
 import torch.distributed as dist
 
-# from pathlib import Path
+from pathlib import Path
 
 from glob import glob
 import os
@@ -39,31 +34,13 @@ from datasets.augment import AugmentPipe
 
 
 def main(args):
-    if args.gpus:
-        os.environ["CUDA_VISIBLE_DEVICES"] = args.gpus
-    # PyCharm 单进程直跑多卡：自动开启 DataParallel 模式（不依赖 torchrun）。
-    visible_gpu_count = torch.cuda.device_count() if torch.cuda.is_available() else 0
-    use_dp = (visible_gpu_count > 1) and ("LOCAL_RANK" not in os.environ) and ("WORLD_SIZE" not in os.environ)
-    os.environ["DDBM_USE_DATAPARALLEL"] = "1" if use_dp else "0"
-    # # 先告诉 dist_util 我们要用哪块 GPU
-    # dist_util.set_device_id(args.gpu)
-    # workdir = get_workdir(args.exp)
-    # Path(workdir).mkdir(parents=True, exist_ok=True)
-    # 多卡并行时优先使用 torchrun 注入的 LOCAL_RANK 选卡。
-
-    local_rank = int(os.environ.get("LOCAL_RANK", args.gpu))
-    dist_util.set_device_id(local_rank)
+    # 先告诉 dist_util 我们要用哪块 GPU
+    dist_util.set_device_id(args.gpu)
     workdir = get_workdir(args.exp)
     Path(workdir).mkdir(parents=True, exist_ok=True)
 
     dist_util.setup_dist()
     logger.configure(dir=workdir)
-    if dist.get_rank() == 0:
-        logger.log(
-            f"CUDA_VISIBLE_DEVICES={os.environ.get('CUDA_VISIBLE_DEVICES', '(all)')}, "
-            f"LOCAL_RANK={os.environ.get('LOCAL_RANK', 'N/A')}, "
-            f"visible_gpus={visible_gpu_count}, use_dataparallel={use_dp}"
-        )
     # comm = MPI.COMM_WORLD
     # rank = comm.Get_rank()
     # visible_gpus = [3, 4]  # 指定 GPU 列表
@@ -72,7 +49,7 @@ def main(args):
     # print(f"Process {rank} is using GPU {os.environ['CUDA_VISIBLE_DEVICES']}")
     if dist.get_rank() == 0:
         name = args.exp if args.resume_checkpoint1 == "" else args.exp + '_resume'
-        wandb.init(project="S2O_canny_scene", group=args.exp, name=name, config=vars(args),
+        wandb.init(project="S2O_canny_scene_alpha", group=args.exp, name=name, config=vars(args),
                    mode='online' if not args.debug else 'disabled')
         logger.log("creating model and diffusion...")
 
@@ -131,7 +108,7 @@ def main(args):
     model.to(dist_util.dev())
     # 加算子
 
-    CNW_net = CNW(3, 3)
+    CNW_net = CNW(3, 3, True)
     CNW_net.to(dist_util.dev())
     ##
     if dist.get_rank() == 0:
@@ -156,9 +133,6 @@ def main(args):
         batch_size=batch_size,
         image_size=data_image_size,
         num_workers=args.num_workers,
-        answer_json_path=args.answer_json_path,
-        train_answer_json_path=args.train_answer_json_path,
-        test_answer_json_path=args.test_answer_json_path,
     )
 
     if args.use_augment:
@@ -193,7 +167,6 @@ def main(args):
         weight_decay=args.weight_decay,
         lr_anneal_steps=args.lr_anneal_steps,
         augment_pipe=augment,
-        text_model_path=args.text_model_path,
         **sample_defaults()
     ).run_loop()
 
@@ -215,21 +188,15 @@ def create_argparser():
         save_interval=10000,
         save_interval_for_preemption=50000,
         resume_checkpoint="",
-        resume_checkpoint1="/data/yjy_data/DDBM_GT_Unet/logs_S2O_Canny_CAIB_MSFM_scene_text_encoder/ema_2_0.9999_170000.pt",
-        resume_checkpoint2="/data/yjy_data/DDBM_GT_Unet/logs_S2O_Canny_CAIB_MSFM_scene_text_encoder/ema_1_0.9999_170000.pt",
-        exp='logs_S2O_Canny_CAIB_MSFM_scene_text_encoder',
+        resume_checkpoint1="/data/yjy_data/DDBM_GT_Unet/scripts/logs_S2O_Canny_Original_CAIB_MSFM_scene_alpha_learnable/ema_1_0.9999_200000.pt",
+        resume_checkpoint2="/data/yjy_data/DDBM_GT_Unet/scripts/logs_S2O_Canny_Original_CAIB_MSFM_scene_alpha_learnable/ema_2_0.9999_200000.pt",
+        exp='logs_S2O_Canny_Original_CAIB_MSFM_scene_alpha_learnable_continue',
         use_fp16=False,
         fp16_scale_growth=1e-3,
         debug=False,
         num_workers=2,
         use_augment=False,
-        answer_json_path=None,
-        train_answer_json_path="/data/yjy_data/DDBM_GT_Unet/captions_train_scene_no_class_answers_en.json",
-        test_answer_json_path="/data/yjy_data/DDBM_GT_Unet/captions_test_scene_no_class_answers_en.json",
-        gpu=0,
-        gpus="1,2,3,4,5,6",
-        text_model_path="/NAS_data/hjf/clip-vit-large-patch14"
-
+        gpu=6,
     )
     defaults.update(model_and_diffusion_defaults())
     parser = argparse.ArgumentParser()

@@ -195,22 +195,26 @@ def load_data(
     seed=42,
     num_workers=2,
     answer_json_path="",
+    train_answer_json_path="",
+    test_answer_json_path="",
 ):
   # Compute batch size for this worker.
   root = data_dir
   
       
-  if dataset == 'edges2handbags' or 'SEN12':
+  if dataset == 'edges2handbags' or dataset == 'SEN12':
+    train_json_path = train_answer_json_path or answer_json_path
+    test_json_path = test_answer_json_path or answer_json_path
      
     from .aligned_dataset import EdgesDataset
     trainset = EdgesDataset(dataroot=root, train=True, img_size= image_size,
-                                random_crop=True, random_flip=True, answer_json_path=answer_json_path)
+                                random_crop=True, random_flip=True, answer_json_path=train_json_path)
 
     valset = EdgesDataset(dataroot=root, train=True, img_size= image_size,
-                                random_crop=False, random_flip=False, answer_json_path=answer_json_path)
+                                random_crop=False, random_flip=False, answer_json_path=train_json_path)
     if include_test:
       testset = EdgesDataset(dataroot=root, train=False, img_size= image_size,
-                                random_crop=False, random_flip=False, answer_json_path=answer_json_path)
+                                random_crop=False, random_flip=False, answer_json_path=test_json_path)
 
   elif dataset == 'diode':
 

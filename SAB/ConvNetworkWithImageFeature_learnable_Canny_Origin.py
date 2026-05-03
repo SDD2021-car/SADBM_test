@@ -3,7 +3,6 @@ import torch.nn as nn
 import torch.nn.functional as F
 import cv2
 import numpy as np
-import Sobel_train
 import Canny_train
 
 
@@ -79,12 +78,13 @@ class ConvNetworkWithImageFeature(nn.Module):
         self.conv_feature2 = nn.Conv2d(64, 128, kernel_size=1)
         self.conv_feature3 = nn.Conv2d(128, 64, kernel_size=1)
         self.conv_feature4 = nn.Conv2d(64, out_channels, kernel_size=1)
+        self.stage0_train = False  # False是分阶段训练 True是联合训练
+        self.fusion_canny = fusion_canny  # False是不融合提质前后的canny True是融合
 
-        self.stage0_train = False   # False是分阶段训练 True是联合训练
-        self.fusion_canny = fusion_canny   # False是不融合提质前后的canny True是融合
-        self.alpha0_fusion = 0.8    # 提质前canny融合系数
-        self.alpha1_fusion = 0.2    # 提质后canny融合系数
-
+        # 可学习的融合参数：raw_alpha_fusion ∈ (-∞, +∞)
+        # 通过 sigmoid 映射到 (0,1) 作为 alpha0_fusion
+        # NOTE: 初始化为 0 ⇒ sigmoid(0)=0.5，你也可以用 logit(0.9) 等作为初值
+        self.raw_alpha_fusion = nn.Parameter(torch.tensor(0.0, dtype=torch.float32))
 
         # canny提纯网络实例化
         self.canny_refine_network = Canny_train.UNet(in_channels=1, out_channels=1)
@@ -92,7 +92,7 @@ class ConvNetworkWithImageFeature(nn.Module):
         if self.stage0_train:
             pass
         else:
-            path_refine_network = '/NAS_data/yjy/DDBM_GT_Unet/DDBM_S2O_canny_results/Canny_train_logs/canny_optimization_result_SEN12_scene/unet_epoch_120.pth'
+            path_refine_network = '/NAS_data/yjy/DDBM_GT_Unet/DDBM_S2O_Canny_Original_results/unet_epoch_120.pth'
             # 加载预训练权重
             checkpoint = torch.load(path_refine_network, map_location='cpu')  # 或者 'cuda:7' 根据你的设备
             # 支持两种情况：保存的是整个模型或 state_dict
@@ -120,9 +120,20 @@ class ConvNetworkWithImageFeature(nn.Module):
         # 对输入图像进行Canny边缘检测
         device = x.device
         SAR_canny_without_refine = apply_canny_to_batch(x).to(device)
-        SAR_canny_with_refine = self.canny_refine_network(SAR_canny_without_refine.mean(dim=1, keepdim=True))
+        SAR_canny_with_refine = self.canny_refine_network(
+            SAR_canny_without_refine.mean(dim=1, keepdim=True)
+        )
+
         if self.fusion_canny:
-            SAR_canny_with_refine_fusion = self.alpha0_fusion * SAR_canny_without_refine + self.alpha1_fusion * SAR_canny_with_refine
+            # 将可学习参数 raw_alpha_fusion 限制到 (0,1)
+            alpha0 = torch.sigmoid(self.raw_alpha_fusion)
+            alpha1 = 1.0 - alpha0
+
+            # 这里 alpha0/alpha1 是标量 tensor，会自动 broadcast 到整个 batch
+            SAR_canny_with_refine_fusion = (
+                    alpha0 * SAR_canny_without_refine
+                    + alpha1 * SAR_canny_with_refine
+            )
         else:
             SAR_canny_with_refine_fusion = SAR_canny_with_refine
 
@@ -150,6 +161,6 @@ class ConvNetworkWithImageFeature(nn.Module):
         output = x4
 
         if self.stage0_train:
-            return output, SAR_canny_with_refine
+            return output, SAR_canny_with_refine_fusion
         else:
             return output
